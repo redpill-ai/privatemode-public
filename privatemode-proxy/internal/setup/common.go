@@ -21,6 +21,7 @@ type Flags struct {
 	ContrastFlags
 	Workspace                     string
 	ManifestPath                  string
+	ExposeSecretEvidence          bool
 	InsecureAPIConnection         bool
 	APIEndpoint                   string
 	APIKey                        *string
@@ -73,5 +74,8 @@ func NewServer(flags Flags, manager *secretmanager.SecretManager, log *slog.Logg
 		ModelsDocument:               flags.ModelsDocument,
 	}
 
+	if flags.ExposeSecretEvidence {
+		opts.SecretEvidence = manager.SecretEvidence
+	}
 	return server.New(client, manager, opts, log)
 }

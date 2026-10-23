@@ -17,6 +17,7 @@ import (
 	"github.com/edgelesssys/continuum/internal/oss/auth"
 	"github.com/edgelesssys/continuum/internal/oss/constants"
 	"github.com/edgelesssys/continuum/internal/oss/httpapi"
+	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 	"github.com/edgelesssys/continuum/internal/oss/secretexchange"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -80,15 +81,22 @@ func TestExchangeSecret(t *testing.T) {
 				secretService.Listener.Addr().String(),
 				http.Header{constants.PrivatemodeClientHeader: {clientID}},
 			)
+			var evidence secretevidence.Bundle
+			client.WithEvidence(&evidence)
 			id, secret, err := client.ExchangeSecret(t.Context(), meshCA, auth.Credential{})
 
 			if tc.wantErr != "" {
 				assert.ErrorContains(t, err, tc.wantErr)
+				assert.Empty(t, evidence.RequestPublicKey)
 				return
 			}
 			require.NoError(t, err)
 			assert.Equal(t, wantID, id)
 			assert.Equal(t, wantSecret, secret)
+			assert.Equal(t, id, secretexchange.ID(evidence.RequestPublicKey))
+			assert.Equal(t, meshCert, evidence.SecretServiceCert)
+			assert.True(t, ecdsa.VerifyASN1(&meshKey.PublicKey, secretexchange.Hash(evidence.RequestPublicKey, evidence.EncapsulatedKey), evidence.Signature))
+			assert.False(t, evidence.ExchangedAt.IsZero())
 		})
 	}
 }

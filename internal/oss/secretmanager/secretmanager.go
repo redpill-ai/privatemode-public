@@ -13,18 +13,22 @@ import (
 
 	"github.com/edgelesssys/continuum/internal/oss/auth"
 	"github.com/edgelesssys/continuum/internal/oss/httpapi"
+	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 	"k8s.io/utils/clock"
 )
 
 const (
 	secretLifetime      = time.Hour
 	secretRefreshBuffer = 15 * time.Minute
+	maxEvidenceBundles  = 8
 )
 
 // SecretManager manages the lifetime of a secret and always returns an up-to-date secret.
 type SecretManager struct {
 	secret                 *Secret
 	updateSecretFn         updateSecretFn
+	recorder               *secretevidence.Bundle
+	evidence               []secretevidence.Bundle // oldest first; guarded by mut together with secret
 	mut                    sync.Mutex
 	clock                  clock.Clock
 	credential             auth.Credential
@@ -57,6 +61,25 @@ func New(updateSecretFn updateSecretFn, dropCredOnUnauthorized bool) *SecretMana
 		dropCredOnUnauthorized: dropCredOnUnauthorized,
 		credChan:               make(chan struct{}),
 	}
+}
+
+// WithEvidence retains the latest eight successful exchanges recorded in evidence.
+// Configure it before use, sharing the recorder with the attestation getter and client.
+func (sm *SecretManager) WithEvidence(evidence *secretevidence.Bundle) *SecretManager {
+	sm.recorder = evidence
+	return sm
+}
+
+// SecretEvidence returns an independent copy of the evidence for a retained secret ID.
+func (sm *SecretManager) SecretEvidence(id string) (secretevidence.Bundle, bool) {
+	sm.mut.Lock()
+	defer sm.mut.Unlock()
+	for _, bundle := range sm.evidence {
+		if bundle.SecretID == id {
+			return bundle.Clone(), true
+		}
+	}
+	return secretevidence.Bundle{}, false
 }
 
 // LatestSecret returns the current secret. If the secret is older than the lifetime, a new secret is generated.
@@ -175,6 +198,17 @@ func (sm *SecretManager) updateSecret(ctx context.Context, now time.Time, cred a
 		// To prevent this, we must remove the monotonic part using Round(0).
 		// Cf. https://pkg.go.dev/time#hdr-Monotonic_Clocks
 		ExpirationDate: now.Round(0).Add(secretLifetime - secretRefreshBuffer),
+	}
+	if sm.recorder != nil {
+		evidence := sm.recorder.Clone()
+		evidence.Version = 1
+		evidence.SecretID = id
+		evidence.ExpiresAt = sm.secret.ExpirationDate.UTC()
+		if len(sm.evidence) == maxEvidenceBundles {
+			copy(sm.evidence, sm.evidence[1:])
+			sm.evidence = sm.evidence[:maxEvidenceBundles-1]
+		}
+		sm.evidence = append(sm.evidence, evidence)
 	}
 	return nil
 }
