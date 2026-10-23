@@ -15,6 +15,7 @@ import (
 	"github.com/edgelesssys/continuum/internal/oss/constants"
 	"github.com/edgelesssys/continuum/internal/oss/httputil"
 	"github.com/edgelesssys/continuum/internal/oss/secretclient"
+	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 	"github.com/edgelesssys/continuum/internal/oss/secretmanager"
 	"github.com/edgelesssys/continuum/internal/oss/secretmanager/updater"
 	contrastsdk "github.com/edgelesssys/contrast/sdk"
@@ -39,8 +40,14 @@ func SecretManager(ctx context.Context, flags Flags, log *slog.Logger) (*secretm
 
 	fs := afero.Afero{Fs: afero.NewOsFs()}
 	extraHTTPHeaders := http.Header{constants.PrivatemodeClientHeader: {flags.ClientID}}
-	ssClient := secretclient.New(httpClient, flags.APIEndpoint, extraHTTPHeaders)
-	caUpdater := attest.NewGetter(httpClient, flags.APIEndpoint, contrastClient, extraHTTPHeaders)
+	// The updater installs a Mesh CA iff GetAttestedMeshCA succeeds, so this recorder
+	// describes the CA used by the next successful exchange.
+	var evidence *secretevidence.Bundle
+	if flags.ExposeSecretEvidence {
+		evidence = &secretevidence.Bundle{}
+	}
+	ssClient := secretclient.New(httpClient, flags.APIEndpoint, extraHTTPHeaders).WithEvidence(evidence)
+	caUpdater := attest.NewGetter(httpClient, flags.APIEndpoint, contrastClient, extraHTTPHeaders).WithEvidence(evidence)
 
 	var caGetter updater.CAGetter
 	var currentManifest func() string
@@ -59,7 +66,7 @@ func SecretManager(ctx context.Context, flags Flags, log *slog.Logger) (*secretm
 
 	secretUpdater := updater.New(ssClient, caGetter, log)
 	credDropOnUnauthorized := flags.APIKey == nil
-	sm := secretmanager.New(secretUpdater.UpdateSecret, credDropOnUnauthorized)
+	sm := secretmanager.New(secretUpdater.UpdateSecret, credDropOnUnauthorized).WithEvidence(evidence)
 	if flags.APIKey != nil {
 		if err := sm.OfferCredential(ctx, auth.APIKey(*flags.APIKey)); err != nil {
 			return nil, nil, fmt.Errorf("trying API key: %w", err)

@@ -8,15 +8,19 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
+	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/edgelesssys/continuum/internal/oss/auth"
 	"github.com/edgelesssys/continuum/internal/oss/httpapi"
+	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 	contrastsdk "github.com/edgelesssys/contrast/sdk"
 )
 
@@ -27,9 +31,14 @@ var ErrManifestMismatch = errors.New("active manifest does not match expected ma
 // Getter is a client that gets the mesh CA of the Privatemode deployment.
 type Getter struct {
 	httpClient       *http.Client
-	contrastClient   *contrastsdk.Client
+	contrastClient   attestationValidator
 	endpoint         string
 	extraHTTPHeaders http.Header
+	evidence         *secretevidence.Bundle
+}
+
+type attestationValidator interface {
+	ValidateAttestation(context.Context, []byte, []byte) (*contrastsdk.CoordinatorState, error)
 }
 
 // NewGetter creates a new Getter.
@@ -40,6 +49,13 @@ func NewGetter(httpClient *http.Client, endpoint string, contrastClient *contras
 		endpoint:         endpoint,
 		extraHTTPHeaders: extraHTTPHeaders,
 	}
+}
+
+// WithEvidence records successful attestations in evidence. Configure it before use;
+// the recorder must be shared with the secret client and manager, which serialize updates.
+func (c Getter) WithEvidence(evidence *secretevidence.Bundle) Getter {
+	c.evidence = evidence
+	return c
 }
 
 // GetAttestedMeshCA gets the mesh CA of the Privatemode deployment.
@@ -84,5 +100,16 @@ func (c Getter) GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, c
 		return nil, fmt.Errorf("parsing mesh CA certificate: %w", err)
 	}
 
+	if c.evidence != nil {
+		digest := sha256.Sum256(expectedMfBytes)
+		c.evidence.Attestation = secretevidence.Attestation{
+			Manifest:       bytes.Clone(expectedMfBytes),
+			ManifestSHA256: hex.EncodeToString(digest[:]),
+			MeshCAPEM:      string(coordinatorState.MeshCA),
+			CoordinatorAttestation: secretevidence.CoordinatorAttestation{
+				Nonce: nonce, Document: att.AttestationDoc, AttestedAt: time.Now().UTC(),
+			},
+		}
+	}
 	return cert, nil
 }

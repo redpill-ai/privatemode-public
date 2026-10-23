@@ -27,6 +27,7 @@ import (
 	"github.com/edgelesssys/continuum/internal/oss/ocspheader"
 	"github.com/edgelesssys/continuum/internal/oss/openai"
 	"github.com/edgelesssys/continuum/internal/oss/requestid"
+	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 	"github.com/edgelesssys/continuum/internal/oss/secretmanager"
 	"github.com/edgelesssys/continuum/privatemode-proxy/internal/server/stub"
 	"github.com/stretchr/testify/assert"
@@ -444,6 +445,7 @@ func TestInvalidSecretRetry(t *testing.T) {
 		apiKeyFallback:               APIKeyFallbackAlways,
 		defaultCacheSalt:             "",
 		sm:                           &stubSecretManager{secrets: []secretmanager.Secret{secretInvalid, secretValid}},
+		secretEvidence:               (&stubSecretManager{}).SecretEvidence,
 		forwarder:                    forwarder.New(http.DefaultClient, stubAuthBackendServer.Listener.Addr().String(), forwarder.SchemeHTTP, forwarder.UpstreamAPI, slog.Default()),
 		log:                          slog.Default(),
 		nvidiaOCSPAllowUnknown:       true,
@@ -472,6 +474,7 @@ func TestInvalidSecretRetry(t *testing.T) {
 	// request ID differs per attempt
 	assert.Equal(secretInvalid.ID, capturedHeaders[0].Get(constants.PrivatemodeSecretIDHeader))
 	assert.Equal(secretValid.ID, capturedHeaders[1].Get(constants.PrivatemodeSecretIDHeader))
+	assert.Equal(secretValid.ID, resp.Result().Header.Get(constants.PrivatemodeSecretIDHeader))
 	assert.NotEqual(
 		capturedHeaders[0].Get(requestid.UserHeader),
 		capturedHeaders[1].Get(requestid.UserHeader),
@@ -481,11 +484,13 @@ func TestInvalidSecretRetry(t *testing.T) {
 // Error responses from outside the TCB are unencrypted and must reach the client with their headers.
 func TestUnencryptedUpstreamErrorKeepsRetryAfter(t *testing.T) {
 	testCases := map[string]struct {
-		status int
+		status   int
+		disabled bool
 	}{
-		"rate limited": {status: http.StatusTooManyRequests},
-		"no nodes":     {status: http.StatusServiceUnavailable},
-		"overloaded":   {status: 529},
+		"rate limited":      {status: http.StatusTooManyRequests},
+		"no nodes":          {status: http.StatusServiceUnavailable},
+		"overloaded":        {status: 529},
+		"evidence disabled": {status: http.StatusTooManyRequests, disabled: true},
 	}
 
 	for name, tc := range testCases {
@@ -495,6 +500,7 @@ func TestUnencryptedUpstreamErrorKeepsRetryAfter(t *testing.T) {
 
 			stubBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Retry-After", "42")
+				w.Header().Set(constants.PrivatemodeSecretIDHeader, "untrusted upstream ID")
 				forwarder.HTTPError(w, r, tc.status, "rejected")
 			}))
 			defer stubBackend.Close()
@@ -502,6 +508,11 @@ func TestUnencryptedUpstreamErrorKeepsRetryAfter(t *testing.T) {
 			apiKey := testAPIKey
 			secret := secretmanager.Secret{ID: "123", Data: bytes.Repeat([]byte{0x42}, 32)}
 			sut := newTestServer(&apiKey, secret, stubBackend.Listener.Addr().String(), "")
+			wantID := "untrusted upstream ID"
+			if !tc.disabled {
+				sut.secretEvidence = (&stubSecretManager{}).SecretEvidence
+				wantID = secret.ID
+			}
 
 			prompt := "Hello"
 			req := prepareChatRequest(t.Context(), require, &prompt, nil, "")
@@ -510,6 +521,7 @@ func TestUnencryptedUpstreamErrorKeepsRetryAfter(t *testing.T) {
 
 			assert.Equal(tc.status, resp.Code)
 			assert.Equal("42", resp.Header().Get("Retry-After"))
+			assert.Equal(wantID, resp.Result().Header.Get(constants.PrivatemodeSecretIDHeader))
 		})
 	}
 }
@@ -1133,4 +1145,8 @@ func prepareMultiPartRequest(ctx context.Context, require *require.Assertions, p
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	return req
+}
+
+func (*stubSecretManager) SecretEvidence(string) (secretevidence.Bundle, bool) {
+	return secretevidence.Bundle{}, false
 }
