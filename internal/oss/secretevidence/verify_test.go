@@ -15,6 +15,7 @@ import (
 	"encoding/hex"
 	"encoding/pem"
 	"errors"
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -40,7 +41,11 @@ func TestVerify(t *testing.T) {
 		"manifest":            {mutate: func(b *Bundle, _ *contrastsdk.CoordinatorState) { b.Manifest[0] ^= 1 }, err: "SHA-256 mismatch"},
 		"attested manifest":   {mutate: func(_ *Bundle, s *contrastsdk.CoordinatorState) { s.Manifests = [][]byte{[]byte("other")} }, err: "exactly the bundle manifest"},
 		"manifest history":    {mutate: func(b *Bundle, s *contrastsdk.CoordinatorState) { s.Manifests = append(s.Manifests, b.Manifest) }, err: "exactly the bundle manifest"},
-		"mesh CA":             {mutate: func(b *Bundle, _ *contrastsdk.CoordinatorState) { b.MeshCAPEM += "\n" }, err: "attested Mesh CA"},
+		"tampered policy":     {mutate: func(_ *Bundle, s *contrastsdk.CoordinatorState) { s.Policies[0][0] ^= 1 }, err: "policy 0 SHA-256 is not present in manifest"},
+		"unexpected policy": {mutate: func(_ *Bundle, s *contrastsdk.CoordinatorState) {
+			s.Policies = append(s.Policies, []byte("other policy"))
+		}, err: "policy 1 SHA-256 is not present in manifest"},
+		"mesh CA": {mutate: func(b *Bundle, _ *contrastsdk.CoordinatorState) { b.MeshCAPEM += "\n" }, err: "attested Mesh CA"},
 		"SS certificate": {mutate: func(b *Bundle, _ *contrastsdk.CoordinatorState) {
 			b.SecretServiceCert = newTestBundle(t).SecretServiceCert
 		}, err: "verifying Secret Service certificate"},
@@ -53,7 +58,10 @@ func TestVerify(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			b := bundle.Clone()
-			state := &contrastsdk.CoordinatorState{Manifests: [][]byte{bytes.Clone(bundle.Manifest)}, MeshCA: []byte(bundle.MeshCAPEM)}
+			state := &contrastsdk.CoordinatorState{
+				Manifests: [][]byte{bytes.Clone(bundle.Manifest)}, MeshCA: []byte(bundle.MeshCAPEM),
+				Policies: [][]byte{testPolicy()},
+			}
 			if tc.mutate != nil {
 				tc.mutate(&b, state)
 			}
@@ -117,7 +125,8 @@ func newTestBundle(t *testing.T) Bundle {
 	pub := priv.PublicKey().Bytes()
 	sig, err := ecdsa.SignASN1(rand.Reader, ssKey, secretexchange.Hash(pub, encap))
 	require.NoError(t, err)
-	manifest := []byte(`{"test":"manifest"}`)
+	policyDigest := sha256.Sum256(testPolicy())
+	manifest := []byte(fmt.Sprintf(`{"Policies":{"%x":{}}}`, policyDigest))
 	digest := sha256.Sum256(manifest)
 	return Bundle{
 		Version: 1, SecretID: secretexchange.ID(pub), ExpiresAt: now.Add(45 * time.Minute),
@@ -128,4 +137,8 @@ func newTestBundle(t *testing.T) Bundle {
 		},
 		Exchange: Exchange{SecretServiceCert: ssCert, RequestPublicKey: pub, EncapsulatedKey: encap, Signature: sig, ExchangedAt: now},
 	}
+}
+
+func testPolicy() []byte {
+	return []byte("package policy\nallow := true\n")
 }

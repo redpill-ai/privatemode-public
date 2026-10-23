@@ -59,7 +59,8 @@ go build -tags contrast_unstable_api -o verify-evidence ./privatemode-proxy/cmd/
 The optional allowlist flag is repeatable. Success exits 0 and prints only the
 verified manifest SHA-256. Failure exits nonzero with a reason. The verifier checks
 Contrast `ValidateAttestation(nonce, document)`, exactly one byte-equal manifest,
-the attested Mesh CA, the Secret Service certificate chain, its signature over
+each supplied policy's raw-byte SHA-256 against the manifest's lowercase hex policy
+keys, the attested Mesh CA, the Secret Service certificate chain, its signature over
 `SHA256(request_public_key || encapsulated_key)`, and the public-key-derived ID.
 Certificate validity uses the verifier's current time, as the live exchange does.
 The input can be verified without contacting the proxy or inference API; the
@@ -69,9 +70,26 @@ The bundle authenticates a secret exchange to a manifest. The response header
 associates a request with that secret through the trusted proxy; the bundle alone
 does not prove that an arbitrary response used it. Timestamps and proxy expiration
 are local metadata, not independently attested claims of freshness. A verifier
-should compare the ID with its response and apply its own manifest policy. An
-empty allowlist authenticates the manifest without endorsing its contents or
-making GPU, OS or model claims.
+should compare the ID with its response and pass `--accept-manifest-sha256` using
+a trusted Privatemode CDN/release manifest. Contrast builds its validator from the
+reference values in the very manifest being checked; it does not establish that
+the manifest belongs to Privatemode. Without an allowlist, PASS proves only
+internal consistency and, for SNP/TDX, that self-declared reference values match
+real hardware. A self-made Coordinator with a self-written manifest can pass.
+Contrast also supports insecure reference values, which do not prove hardware
+attestation. The CLI warns on stderr when no allowlist is given; stdout remains
+the digest only. The printed SHA-256 is meaningful only after matching a trusted
+manifest. This does not establish GPU, OS or model claims.
+
+The attestation document is not authenticated as an opaque JSON byte string.
+Report data binds the nonce, manifest transition digest, root CA and Mesh CA;
+the hardware validator verifies the signed report against those values. Policy
+bytes are authenticated by their manifest hashes, but policy array ordering,
+duplicates and completeness are not authenticated. The document's `version` is
+unauthenticated metadata. Its `attestation_type` is also unauthenticated: Contrast
+v1.25.1 ignores this field through fixed-OID compatibility wrappers and selects
+validators from the manifest. Neither field should be used as a verified claim.
+Unknown JSON fields and serialization details are not authenticated either.
 
 ## Container build
 
