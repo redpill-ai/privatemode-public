@@ -40,6 +40,8 @@ func SecretManager(ctx context.Context, flags Flags, log *slog.Logger) (*secretm
 
 	fs := afero.Afero{Fs: afero.NewOsFs()}
 	extraHTTPHeaders := http.Header{constants.PrivatemodeClientHeader: {flags.ClientID}}
+	// The updater installs a Mesh CA iff GetAttestedMeshCA succeeds, so this recorder
+	// describes the CA used by the next successful exchange.
 	var evidence *secretevidence.Bundle
 	if flags.ExposeSecretEvidence {
 		evidence = &secretevidence.Bundle{}

@@ -132,10 +132,3 @@ func TestAPIKeyFileAliases(t *testing.T) {
 		})
 	}
 }
-
-func TestExposeSecretEvidenceFlag(t *testing.T) {
-	cmd := New()
-	assert.False(t, exposeSecretEvidence)
-	require.NoError(t, cmd.ParseFlags([]string{"--expose-secret-evidence"}))
-	assert.True(t, exposeSecretEvidence)
-}

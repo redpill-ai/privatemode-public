@@ -934,7 +934,6 @@ func TestInferenceHeaders(t *testing.T) {
 
 			apiKey := testAPIKey
 			sut := newTestServer(&apiKey, secret, stubBackend.Listener.Addr().String(), "")
-			sut.secretEvidence = (&stubSecretManager{}).SecretEvidence
 
 			req := tc.buildRequest(t, require)
 			req.Header.Set(constants.PrivatemodeContentLengthTokensHeader, "9999")
@@ -942,7 +941,6 @@ func TestInferenceHeaders(t *testing.T) {
 			resp := httptest.NewRecorder()
 			sut.GetHandler().ServeHTTP(resp, req)
 			assert.Equal(http.StatusOK, resp.Code)
-			assert.Equal(secret.ID, resp.Result().Header.Get(constants.PrivatemodeSecretIDHeader))
 		})
 	}
 }

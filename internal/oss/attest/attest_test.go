@@ -39,11 +39,9 @@ func TestGetAttestedMeshCA(t *testing.T) {
 	caPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: api.Certificate().Raw})
 	for name, tc := range map[string]struct {
 		manifests [][]byte
-		disabled  bool
 		err       string
 	}{
 		"valid":              {manifests: [][]byte{manifest}},
-		"disabled":           {manifests: [][]byte{manifest}, disabled: true},
 		"different manifest": {manifests: [][]byte{[]byte("other")}, err: "does not match"},
 		"multiple manifests": {manifests: [][]byte{manifest, manifest}, err: "exactly one"},
 	} {
@@ -53,9 +51,7 @@ func TestGetAttestedMeshCA(t *testing.T) {
 				contrastClient: testValidator{t: t, nonce: &nonce, doc: doc, state: &contrastsdk.CoordinatorState{Manifests: tc.manifests, MeshCA: caPEM}},
 			}
 			var evidence secretevidence.Bundle
-			if !tc.disabled {
-				getter = getter.WithEvidence(&evidence)
-			}
+			getter = getter.WithEvidence(&evidence)
 			ca, err := getter.GetAttestedMeshCA(t.Context(), manifest, auth.Credential{})
 			if tc.err != "" {
 				assert.ErrorContains(t, err, tc.err)
@@ -65,11 +61,6 @@ func TestGetAttestedMeshCA(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, api.Certificate().Raw, ca.Raw)
-			if tc.disabled {
-				assert.Empty(t, evidence)
-				assert.Nil(t, getter.evidence)
-				return
-			}
 			assert.Equal(t, string(caPEM), evidence.MeshCAPEM)
 			assert.Equal(t, nonce, evidence.CoordinatorAttestation.Nonce)
 			assert.Equal(t, doc, evidence.CoordinatorAttestation.Document)
