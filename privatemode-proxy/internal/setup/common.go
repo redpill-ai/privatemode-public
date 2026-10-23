@@ -71,6 +71,7 @@ func NewServer(flags Flags, manager *secretmanager.SecretManager, log *slog.Logg
 		CORSAllowedOrigins:           flags.CORSAllowedOrigins,
 		ClientID:                     flags.ClientID,
 		ModelsDocument:               flags.ModelsDocument,
+		SecretEvidence:               manager,
 	}
 
 	return server.New(client, manager, opts, log)

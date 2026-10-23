@@ -32,6 +32,7 @@ import (
 	"github.com/edgelesssys/continuum/internal/oss/persist"
 	"github.com/edgelesssys/continuum/internal/oss/process"
 	"github.com/edgelesssys/continuum/internal/oss/requestid"
+	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 	"github.com/edgelesssys/continuum/internal/oss/secretmanager"
 	"github.com/tidwall/gjson"
 )
@@ -67,6 +68,7 @@ type Server struct {
 	corsAllowedOrigins           []string
 	clientID                     string
 	modelsDocument               *ModelsDocument
+	secretEvidence               SecretEvidenceReader
 }
 
 // Opts are the options for creating a new [Server].
@@ -88,6 +90,13 @@ type Opts struct {
 	ClientID                     string
 	// ModelsDocument, if set, is served at the models endpoint instead of forwarding the request.
 	ModelsDocument *ModelsDocument
+	// SecretEvidence provides the public transcript for retained secret IDs.
+	SecretEvidence SecretEvidenceReader
+}
+
+// SecretEvidenceReader reads evidence without triggering an attestation or secret update.
+type SecretEvidenceReader interface {
+	SecretEvidence(string) (secretevidence.Bundle, bool)
 }
 
 type apiForwarder interface {
@@ -129,6 +138,7 @@ func New(client *http.Client, sm secretManager, opts Opts, log *slog.Logger) *Se
 		corsAllowedOrigins:           opts.CORSAllowedOrigins,
 		clientID:                     opts.ClientID,
 		modelsDocument:               opts.ModelsDocument,
+		secretEvidence:               opts.SecretEvidence,
 	}
 }
 
@@ -174,6 +184,7 @@ func (s *Server) GetHandler() http.Handler {
 	mux.Handle("POST "+constants.OpenAITranscriptionsEndpoint, api(s.transcriptionsHandler))
 	mux.Handle("POST "+constants.AnthropicMessagesEndpoint, api(s.chatRequestHandler))
 	mux.HandleFunc("GET /readyz", s.readinessHandler)
+	mux.HandleFunc("GET /privatemode/v1/secret-evidence/{id}", s.secretEvidenceHandler)
 
 	// Apply middlewares below, handler holds the chain entrypoint
 	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -246,6 +257,7 @@ func (s *Server) forwardEncrypted(
 	requestMutator forwarder.RequestMutator,
 ) {
 	var ce *encbody.ClientExchange
+	var attemptSecretID string
 	ctx := r.Context()
 	// request ID is always stored in context by middleware
 	requestID, _ := requestid.FromContext(ctx)
@@ -294,6 +306,7 @@ func (s *Server) forwardEncrypted(
 		if err := s.setEncryptionHeaders(req, secret, requestID, attempt); err != nil {
 			return fmt.Errorf("setting headers on upstream request: %w", err)
 		}
+		attemptSecretID = secret.ID
 
 		return nil
 	}
@@ -301,14 +314,20 @@ func (s *Server) forwardEncrypted(
 	fullResponseMapper := func(resp *http.Response) (forwarder.Response, error) {
 		logging.AddSummaryAttrs(ctx, "backendRequestID", requestid.FromHeader(resp.Header))
 
+		var dsResp forwarder.Response
 		dsResp, err := ce.DecryptResponse(resp, constants.MaxEncryptedFrameSize)
 		if err != nil {
 			if errors.Is(err, encbody.ErrNotEncrypted) && resp.StatusCode >= 400 {
 				// Error responses originating outside the TCB are unencrypted
-				return forwarder.PassthroughResponseMapper(resp)
+				dsResp, err = forwarder.PassthroughResponseMapper(resp)
 			}
-			return nil, fmt.Errorf("decrypting response: %w", err)
+			if err != nil {
+				return nil, fmt.Errorf("decrypting response: %w", err)
+			}
 		}
+		// Use the successful attempt's ID, even if the manager has already rotated.
+		// Mapping happens before the forwarder writes headers or streaming body bytes.
+		dsResp.GetHeader().Set(constants.PrivatemodeSecretIDHeader, attemptSecretID)
 
 		return dsResp, nil
 	}

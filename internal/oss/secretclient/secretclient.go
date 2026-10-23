@@ -13,9 +13,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/edgelesssys/continuum/internal/oss/auth"
 	"github.com/edgelesssys/continuum/internal/oss/httpapi"
+	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 	"github.com/edgelesssys/continuum/internal/oss/secretexchange"
 )
 
@@ -46,7 +48,14 @@ func New(httpClient *http.Client, endpoint string, extraHTTPHeaders http.Header)
 
 // ExchangeSecret performs a cryptographic key agreement with the Privatemode backend.
 func (c *Client) ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, error) {
-	return ExchangeSecret(ctx, c.httpClient, c.endpoint, cred, c.extraHTTPHeaders, func(req *httpapi.SecretReq, resp *httpapi.SecretResp) error {
+	id, secret, _, err := c.ExchangeSecretWithEvidence(ctx, meshCA, cred)
+	return id, secret, err
+}
+
+// ExchangeSecretWithEvidence returns the public transcript together with the secret.
+func (c *Client) ExchangeSecretWithEvidence(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, secretevidence.Exchange, error) {
+	var evidence secretevidence.Exchange
+	id, secret, err := ExchangeSecret(ctx, c.httpClient, c.endpoint, cred, c.extraHTTPHeaders, func(req *httpapi.SecretReq, resp *httpapi.SecretResp) error {
 		ssPublicKey, err := getVerifiedPublicKey(resp.MeshCert, meshCA)
 		if err != nil {
 			return fmt.Errorf("getting public key: %w", err)
@@ -54,8 +63,19 @@ func (c *Client) ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, c
 		if !ecdsa.VerifyASN1(ssPublicKey, secretexchange.Hash(req.PublicKey, resp.EncapsulatedKey), resp.Signature) {
 			return errors.New("invalid signature")
 		}
+		evidence = secretevidence.Exchange{
+			SecretServiceCert: resp.MeshCert,
+			RequestPublicKey:  req.PublicKey,
+			EncapsulatedKey:   resp.EncapsulatedKey,
+			Signature:         resp.Signature,
+		}
 		return nil
 	})
+	if err != nil {
+		return "", nil, secretevidence.Exchange{}, err
+	}
+	evidence.ExchangedAt = time.Now().UTC()
+	return id, secret, evidence, nil
 }
 
 type responseVerifier func(*httpapi.SecretReq, *httpapi.SecretResp) error

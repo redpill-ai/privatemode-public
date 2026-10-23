@@ -472,6 +472,7 @@ func TestInvalidSecretRetry(t *testing.T) {
 	// request ID differs per attempt
 	assert.Equal(secretInvalid.ID, capturedHeaders[0].Get(constants.PrivatemodeSecretIDHeader))
 	assert.Equal(secretValid.ID, capturedHeaders[1].Get(constants.PrivatemodeSecretIDHeader))
+	assert.Equal(secretValid.ID, resp.Result().Header.Get(constants.PrivatemodeSecretIDHeader))
 	assert.NotEqual(
 		capturedHeaders[0].Get(requestid.UserHeader),
 		capturedHeaders[1].Get(requestid.UserHeader),
@@ -495,6 +496,7 @@ func TestUnencryptedUpstreamErrorKeepsRetryAfter(t *testing.T) {
 
 			stubBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.Header().Set("Retry-After", "42")
+				w.Header().Set(constants.PrivatemodeSecretIDHeader, "untrusted upstream ID")
 				forwarder.HTTPError(w, r, tc.status, "rejected")
 			}))
 			defer stubBackend.Close()
@@ -510,6 +512,7 @@ func TestUnencryptedUpstreamErrorKeepsRetryAfter(t *testing.T) {
 
 			assert.Equal(tc.status, resp.Code)
 			assert.Equal("42", resp.Header().Get("Retry-After"))
+			assert.Equal(secret.ID, resp.Result().Header.Get(constants.PrivatemodeSecretIDHeader))
 		})
 	}
 }
@@ -929,6 +932,7 @@ func TestInferenceHeaders(t *testing.T) {
 			resp := httptest.NewRecorder()
 			sut.GetHandler().ServeHTTP(resp, req)
 			assert.Equal(http.StatusOK, resp.Code)
+			assert.Equal(secret.ID, resp.Result().Header.Get(constants.PrivatemodeSecretIDHeader))
 		})
 	}
 }

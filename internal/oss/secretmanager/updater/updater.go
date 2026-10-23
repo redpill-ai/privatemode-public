@@ -14,6 +14,7 @@ import (
 	"github.com/avast/retry-go/v5"
 	"github.com/edgelesssys/continuum/internal/oss/attest"
 	"github.com/edgelesssys/continuum/internal/oss/auth"
+	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 )
 
 // Updater implements how to update prompt secrets when the underlying Privatemode deployment is updated. It is not thread-safe.
@@ -22,16 +23,16 @@ type Updater struct {
 	log       *slog.Logger
 	retryOpts []retry.Option
 	caGetter  CAGetter
-	meshCA    *x509.Certificate
+	meshCA    *attest.MeshCA
 }
 
 type ssClient interface {
-	ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, error)
+	ExchangeSecretWithEvidence(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, secretevidence.Exchange, error)
 }
 
 // CAGetter gets the mesh CA.
 type CAGetter interface {
-	GetMeshCA(ctx context.Context, cred auth.Credential) (*x509.Certificate, error)
+	GetMeshCA(ctx context.Context, cred auth.Credential) (attest.MeshCA, error)
 }
 
 // New returns a new secret updater.
@@ -54,6 +55,13 @@ func New(ssClient ssClient, caGetter CAGetter, log *slog.Logger) *Updater {
 
 // UpdateSecret implements how to update prompt secrets when the underlying Privatemode deployment is updated.
 func (s *Updater) UpdateSecret(ctx context.Context, cred auth.Credential) (id string, data []byte, retErr error) {
+	id, data, _, err := s.UpdateSecretWithEvidence(ctx, cred)
+	return id, data, err
+}
+
+// UpdateSecretWithEvidence returns the evidence for the CA and exchange that produced this secret.
+func (s *Updater) UpdateSecretWithEvidence(ctx context.Context, cred auth.Credential) (id string, data []byte, evidence secretevidence.Bundle, retErr error) {
+	var exchange secretevidence.Exchange
 	// retry.Context aborts the inter-attempt backoff on cancellation (e.g. shutdown); it's per-call so it's added here.
 	opts := append([]retry.Option{retry.Context(ctx)}, s.retryOpts...)
 	if err := retry.New(opts...).Do(func() error {
@@ -66,7 +74,7 @@ func (s *Updater) UpdateSecret(ctx context.Context, cred auth.Credential) (id st
 			}
 		}
 		var err error
-		id, data, err = s.ssClient.ExchangeSecret(ctx, s.meshCA, cred)
+		id, data, exchange, err = s.ssClient.ExchangeSecretWithEvidence(ctx, s.meshCA.Certificate, cred)
 		if err == nil {
 			return nil
 		}
@@ -74,12 +82,14 @@ func (s *Updater) UpdateSecret(ctx context.Context, cred auth.Credential) (id st
 		if err := s.updateCA(ctx, cred); err != nil {
 			return err
 		}
-		id, data, err = s.ssClient.ExchangeSecret(ctx, s.meshCA, cred)
+		id, data, exchange, err = s.ssClient.ExchangeSecretWithEvidence(ctx, s.meshCA.Certificate, cred)
 		return err
 	}); err != nil {
-		return "", nil, fmt.Errorf("setting secrets: %w", err)
+		return "", nil, secretevidence.Bundle{}, fmt.Errorf("setting secrets: %w", err)
 	}
-	return id, data, nil
+	return id, data, secretevidence.Bundle{
+		Version: 1, SecretID: id, Attestation: s.meshCA.Evidence, Exchange: exchange,
+	}, nil
 }
 
 func (s *Updater) updateCA(ctx context.Context, cred auth.Credential) error {
@@ -87,7 +97,7 @@ func (s *Updater) updateCA(ctx context.Context, cred auth.Credential) error {
 	if err != nil {
 		return fmt.Errorf("updating mesh CA: %w", err)
 	}
-	s.meshCA = cert
+	s.meshCA = &cert
 	return nil
 }
 
@@ -106,10 +116,10 @@ func NewStaticCAGetter(caUpdater caUpdater, expectedMfBytes []byte) StaticCAGett
 }
 
 // GetMeshCA gets the certificate.
-func (s StaticCAGetter) GetMeshCA(ctx context.Context, cred auth.Credential) (*x509.Certificate, error) {
-	return s.caUpdater.GetAttestedMeshCA(ctx, s.expectedMfBytes, cred)
+func (s StaticCAGetter) GetMeshCA(ctx context.Context, cred auth.Credential) (attest.MeshCA, error) {
+	return s.caUpdater.GetAttestedMeshCAWithEvidence(ctx, s.expectedMfBytes, cred)
 }
 
 type caUpdater interface {
-	GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (*x509.Certificate, error)
+	GetAttestedMeshCAWithEvidence(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (attest.MeshCA, error)
 }

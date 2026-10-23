@@ -7,7 +7,6 @@ package privatemode
 import (
 	"bytes"
 	"context"
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -434,6 +433,6 @@ type attestedMeshCAAdapter struct {
 	expectedMf   []byte
 }
 
-func (a attestedMeshCAAdapter) GetMeshCA(ctx context.Context, cred auth.Credential) (*x509.Certificate, error) {
-	return a.attestGetter.GetAttestedMeshCA(ctx, a.expectedMf, cred)
+func (a attestedMeshCAAdapter) GetMeshCA(ctx context.Context, cred auth.Credential) (attest.MeshCA, error) {
+	return a.attestGetter.GetAttestedMeshCAWithEvidence(ctx, a.expectedMf, cred)
 }

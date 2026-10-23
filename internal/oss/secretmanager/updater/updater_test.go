@@ -10,8 +10,10 @@ import (
 	"time"
 
 	"github.com/avast/retry-go/v5"
+	"github.com/edgelesssys/continuum/internal/oss/attest"
 	"github.com/edgelesssys/continuum/internal/oss/auth"
 	"github.com/edgelesssys/continuum/internal/oss/logging"
+	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -64,17 +66,17 @@ type stubCAGetter struct {
 	err error
 }
 
-func (c *stubCAGetter) GetMeshCA(context.Context, auth.Credential) (*x509.Certificate, error) {
-	return &x509.Certificate{}, c.err
+func (c *stubCAGetter) GetMeshCA(context.Context, auth.Credential) (attest.MeshCA, error) {
+	return attest.MeshCA{Certificate: &x509.Certificate{}}, c.err
 }
 
 type stubSecretClient struct {
 	errWithoutCA error
 }
 
-func (s *stubSecretClient) ExchangeSecret(_ context.Context, meshCA *x509.Certificate, _ auth.Credential) (string, []byte, error) {
+func (s *stubSecretClient) ExchangeSecretWithEvidence(_ context.Context, meshCA *x509.Certificate, _ auth.Credential) (string, []byte, secretevidence.Exchange, error) {
 	if meshCA == nil {
-		return "", nil, s.errWithoutCA
+		return "", nil, secretevidence.Exchange{}, s.errWithoutCA
 	}
-	return "id", []byte("data"), nil
+	return "id", []byte("data"), secretevidence.Exchange{}, nil
 }
