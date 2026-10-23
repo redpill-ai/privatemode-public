@@ -17,6 +17,7 @@ import (
 	"github.com/edgelesssys/continuum/internal/oss/auth"
 	"github.com/edgelesssys/continuum/internal/oss/constants"
 	"github.com/edgelesssys/continuum/internal/oss/httpapi"
+	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 	"github.com/edgelesssys/continuum/internal/oss/secretexchange"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -29,9 +30,11 @@ func TestExchangeSecret(t *testing.T) {
 	for _, tc := range []struct {
 		name          string
 		invalidateSig bool
+		disabled      bool
 		wantErr       string
 	}{
 		{name: "success"},
+		{name: "disabled", disabled: true},
 		{name: "invalid signature", invalidateSig: true, wantErr: "invalid signature"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -80,7 +83,11 @@ func TestExchangeSecret(t *testing.T) {
 				secretService.Listener.Addr().String(),
 				http.Header{constants.PrivatemodeClientHeader: {clientID}},
 			)
-			id, secret, evidence, err := client.ExchangeSecret(t.Context(), meshCA, auth.Credential{})
+			var evidence secretevidence.Bundle
+			if !tc.disabled {
+				client.WithEvidence(&evidence)
+			}
+			id, secret, err := client.ExchangeSecret(t.Context(), meshCA, auth.Credential{})
 
 			if tc.wantErr != "" {
 				assert.ErrorContains(t, err, tc.wantErr)
@@ -90,6 +97,11 @@ func TestExchangeSecret(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, wantID, id)
 			assert.Equal(t, wantSecret, secret)
+			if tc.disabled {
+				assert.Empty(t, evidence)
+				assert.Nil(t, client.evidence)
+				return
+			}
 			assert.Equal(t, id, secretexchange.ID(evidence.RequestPublicKey))
 			assert.Equal(t, meshCert, evidence.SecretServiceCert)
 			assert.True(t, ecdsa.VerifyASN1(&meshKey.PublicKey, secretexchange.Hash(evidence.RequestPublicKey, evidence.EncapsulatedKey), evidence.Signature))

@@ -35,6 +35,7 @@ type Client struct {
 	httpClient       *http.Client
 	endpoint         string
 	extraHTTPHeaders http.Header
+	evidence         *secretevidence.Bundle
 }
 
 // New sets up a new [Client].
@@ -46,9 +47,19 @@ func New(httpClient *http.Client, endpoint string, extraHTTPHeaders http.Header)
 	}
 }
 
-// ExchangeSecret performs a key agreement and returns the secret and public transcript.
-func (c *Client) ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, secretevidence.Exchange, error) {
-	var evidence secretevidence.Exchange
+// WithEvidence records successful exchange transcripts in evidence. Configure it before
+// use and share it with the attestation getter and manager; updates must be serialized.
+func (c *Client) WithEvidence(evidence *secretevidence.Bundle) *Client {
+	c.evidence = evidence
+	return c
+}
+
+// ExchangeSecret performs a cryptographic key agreement with the Privatemode backend.
+func (c *Client) ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, error) {
+	var evidence *secretevidence.Exchange
+	if c.evidence != nil {
+		evidence = &secretevidence.Exchange{}
+	}
 	id, secret, err := ExchangeSecret(ctx, c.httpClient, c.endpoint, cred, c.extraHTTPHeaders, func(req *httpapi.SecretReq, resp *httpapi.SecretResp) error {
 		ssPublicKey, err := getVerifiedPublicKey(resp.MeshCert, meshCA)
 		if err != nil {
@@ -57,19 +68,24 @@ func (c *Client) ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, c
 		if !ecdsa.VerifyASN1(ssPublicKey, secretexchange.Hash(req.PublicKey, resp.EncapsulatedKey), resp.Signature) {
 			return errors.New("invalid signature")
 		}
-		evidence = secretevidence.Exchange{
-			SecretServiceCert: resp.MeshCert,
-			RequestPublicKey:  req.PublicKey,
-			EncapsulatedKey:   resp.EncapsulatedKey,
-			Signature:         resp.Signature,
+		if evidence != nil {
+			*evidence = secretevidence.Exchange{
+				SecretServiceCert: resp.MeshCert,
+				RequestPublicKey:  req.PublicKey,
+				EncapsulatedKey:   resp.EncapsulatedKey,
+				Signature:         resp.Signature,
+			}
 		}
 		return nil
 	})
 	if err != nil {
-		return "", nil, secretevidence.Exchange{}, err
+		return "", nil, err
 	}
-	evidence.ExchangedAt = time.Now().UTC()
-	return id, secret, evidence, nil
+	if c.evidence != nil {
+		evidence.ExchangedAt = time.Now().UTC()
+		c.evidence.Exchange = *evidence
+	}
+	return id, secret, nil
 }
 
 type responseVerifier func(*httpapi.SecretReq, *httpapi.SecretResp) error

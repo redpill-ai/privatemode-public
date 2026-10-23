@@ -18,5 +18,7 @@ docker run --rm --entrypoint /bin/verify-evidence \
   --accept-manifest-sha256 <trusted-manifest-sha256>
 ```
 
-The proxy accepts its existing arguments. Mount test keys read-only and use
+Evidence is off by default. Add `--expose-secret-evidence` to the proxy arguments
+to enable capture, the response header and evidence endpoint. Existing arguments
+remain supported; the Go/wasm SDK does not capture evidence. Mount test keys read-only and use
 `--api-key @/path/to/key`; never pass the key itself on the command line.

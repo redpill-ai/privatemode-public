@@ -39,6 +39,7 @@ var (
 	listenAddress                 string
 	port                          string
 	manifestPath                  string
+	exposeSecretEvidence          bool
 	nvidiaOCSPAllowUnknown        bool
 	nvidiaOCSPRevokedGracePeriod  int
 	tlsCertPath                   string
@@ -104,6 +105,8 @@ func New() *cobra.Command {
 		fmt.Sprintf("The path into which the binary writes files. This includes the manifest log data in the '%s' subdirectory.", constants.ManifestDir))
 	cmd.Flags().StringVar(&manifestPath, "manifest-path", "",
 		"The path for the manifest file. If not provided, the manifest will be read from the remote source.")
+	cmd.Flags().BoolVar(&exposeSecretEvidence, "expose-secret-evidence", false,
+		"Expose public attestation and exchange evidence for inference secrets")
 	cmd.Flags().DurationVar(&timeoutRead, "timeout-read", 2*time.Minute,
 		"Maximum time to read an entire incoming request, including its body. Zero disables the timeout.")
 	cmd.Flags().DurationVar(&timeoutReadHeader, "timeout-read-header", 10*time.Second,
@@ -302,8 +305,9 @@ func runProxy(cmd *cobra.Command, _ []string) error {
 
 	log.InfoContext(cmd.Context(), "Starting proxy")
 	flags := setup.Flags{
-		Workspace:    workspace,
-		ManifestPath: manifestPath,
+		Workspace:            workspace,
+		ManifestPath:         manifestPath,
+		ExposeSecretEvidence: exposeSecretEvidence,
 		ContrastFlags: setup.ContrastFlags{
 			CDNBaseURL: cdnBaseURL,
 		},

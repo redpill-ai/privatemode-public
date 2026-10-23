@@ -14,7 +14,6 @@ import (
 	"github.com/avast/retry-go/v5"
 	"github.com/edgelesssys/continuum/internal/oss/attest"
 	"github.com/edgelesssys/continuum/internal/oss/auth"
-	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 )
 
 // Updater implements how to update prompt secrets when the underlying Privatemode deployment is updated. It is not thread-safe.
@@ -23,16 +22,16 @@ type Updater struct {
 	log       *slog.Logger
 	retryOpts []retry.Option
 	caGetter  CAGetter
-	meshCA    *attest.MeshCA
+	meshCA    *x509.Certificate
 }
 
 type ssClient interface {
-	ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, secretevidence.Exchange, error)
+	ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, error)
 }
 
 // CAGetter gets the mesh CA.
 type CAGetter interface {
-	GetMeshCA(ctx context.Context, cred auth.Credential) (attest.MeshCA, error)
+	GetMeshCA(ctx context.Context, cred auth.Credential) (*x509.Certificate, error)
 }
 
 // New returns a new secret updater.
@@ -53,9 +52,8 @@ func New(ssClient ssClient, caGetter CAGetter, log *slog.Logger) *Updater {
 	}
 }
 
-// UpdateSecret returns a new secret with the evidence that authenticated its exchange.
-func (s *Updater) UpdateSecret(ctx context.Context, cred auth.Credential) (id string, data []byte, evidence secretevidence.Bundle, retErr error) {
-	var exchange secretevidence.Exchange
+// UpdateSecret implements how to update prompt secrets when the underlying Privatemode deployment is updated.
+func (s *Updater) UpdateSecret(ctx context.Context, cred auth.Credential) (id string, data []byte, retErr error) {
 	// retry.Context aborts the inter-attempt backoff on cancellation (e.g. shutdown); it's per-call so it's added here.
 	opts := append([]retry.Option{retry.Context(ctx)}, s.retryOpts...)
 	if err := retry.New(opts...).Do(func() error {
@@ -68,7 +66,7 @@ func (s *Updater) UpdateSecret(ctx context.Context, cred auth.Credential) (id st
 			}
 		}
 		var err error
-		id, data, exchange, err = s.ssClient.ExchangeSecret(ctx, s.meshCA.Certificate, cred)
+		id, data, err = s.ssClient.ExchangeSecret(ctx, s.meshCA, cred)
 		if err == nil {
 			return nil
 		}
@@ -76,14 +74,12 @@ func (s *Updater) UpdateSecret(ctx context.Context, cred auth.Credential) (id st
 		if err := s.updateCA(ctx, cred); err != nil {
 			return err
 		}
-		id, data, exchange, err = s.ssClient.ExchangeSecret(ctx, s.meshCA.Certificate, cred)
+		id, data, err = s.ssClient.ExchangeSecret(ctx, s.meshCA, cred)
 		return err
 	}); err != nil {
-		return "", nil, secretevidence.Bundle{}, fmt.Errorf("setting secrets: %w", err)
+		return "", nil, fmt.Errorf("setting secrets: %w", err)
 	}
-	return id, data, secretevidence.Bundle{
-		Version: 1, SecretID: id, Attestation: s.meshCA.Evidence, Exchange: exchange,
-	}, nil
+	return id, data, nil
 }
 
 func (s *Updater) updateCA(ctx context.Context, cred auth.Credential) error {
@@ -91,7 +87,7 @@ func (s *Updater) updateCA(ctx context.Context, cred auth.Credential) error {
 	if err != nil {
 		return fmt.Errorf("updating mesh CA: %w", err)
 	}
-	s.meshCA = &cert
+	s.meshCA = cert
 	return nil
 }
 
@@ -110,10 +106,10 @@ func NewStaticCAGetter(caUpdater caUpdater, expectedMfBytes []byte) StaticCAGett
 }
 
 // GetMeshCA gets the certificate.
-func (s StaticCAGetter) GetMeshCA(ctx context.Context, cred auth.Credential) (attest.MeshCA, error) {
+func (s StaticCAGetter) GetMeshCA(ctx context.Context, cred auth.Credential) (*x509.Certificate, error) {
 	return s.caUpdater.GetAttestedMeshCA(ctx, s.expectedMfBytes, cred)
 }
 
 type caUpdater interface {
-	GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (attest.MeshCA, error)
+	GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (*x509.Certificate, error)
 }

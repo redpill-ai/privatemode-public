@@ -5,11 +5,11 @@ package setup
 
 import (
 	"context"
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"sync"
 
-	"github.com/edgelesssys/continuum/internal/oss/attest"
 	"github.com/edgelesssys/continuum/internal/oss/auth"
 	"github.com/edgelesssys/continuum/internal/oss/privatemode"
 	"github.com/edgelesssys/continuum/privatemode-proxy/internal/manifestlog"
@@ -28,7 +28,7 @@ type caAdapter struct {
 }
 
 type caUpdater interface {
-	GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (attest.MeshCA, error)
+	GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (*x509.Certificate, error)
 }
 
 type manifestFetcher interface {
@@ -50,20 +50,20 @@ func newCAAdapter(cdnBaseURL string, mfLogger mfLogger, caUpdater caUpdater, log
 }
 
 // GetMeshCA retrieves the latest manifest and gets the attested mesh CA.
-func (c *caAdapter) GetMeshCA(ctx context.Context, cred auth.Credential) (attest.MeshCA, error) {
+func (c *caAdapter) GetMeshCA(ctx context.Context, cred auth.Credential) (*x509.Certificate, error) {
 	expectedMfBytes, err := c.fetcher.FetchManifest(ctx)
 	if err != nil {
-		return attest.MeshCA{}, fmt.Errorf("fetching manifest: %w", err)
+		return nil, fmt.Errorf("fetching manifest: %w", err)
 	}
 	c.log.InfoContext(ctx, "Coordinator manifest fetched successfully")
 
 	if err := c.mfLogger.Log(expectedMfBytes); err != nil {
-		return attest.MeshCA{}, fmt.Errorf("logging manifest: %w", err)
+		return nil, fmt.Errorf("logging manifest: %w", err)
 	}
 
 	cert, err := c.caUpdater.GetAttestedMeshCA(ctx, expectedMfBytes, cred)
 	if err != nil {
-		return attest.MeshCA{}, fmt.Errorf("getting attested certificate: %w", err)
+		return nil, fmt.Errorf("getting attested certificate: %w", err)
 	}
 
 	c.manifestMu.Lock()

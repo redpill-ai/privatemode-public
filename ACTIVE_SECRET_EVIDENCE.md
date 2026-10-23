@@ -1,6 +1,10 @@
 # Active secret evidence
 
-The proxy retains public evidence for the latest eight successful secret exchanges
+**Off by default, with zero impact when off.** Enable `--expose-secret-evidence` to capture and expose evidence.
+With the flag off, there is no evidence capture, retention, route or added response
+header; proxy behavior and SDK APIs remain unchanged.
+
+When enabled, the proxy retains public evidence for the latest eight successful secret exchanges
 in memory (cleared on restart). Each bundle is installed atomically with its secret,
 using the attestation of the Mesh CA that authenticated that exchange, even when
 cached. Static and dynamic manifest modes share this path. Failed exchanges publish

@@ -17,7 +17,7 @@ func (s *Server) secretEvidenceHandler(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "malformed secret ID", http.StatusBadRequest)
 		return
 	}
-	bundle, ok := s.sm.SecretEvidence(base64.StdEncoding.EncodeToString(id))
+	bundle, ok := s.secretEvidence(base64.StdEncoding.EncodeToString(id))
 	if !ok {
 		http.NotFound(w, r)
 		return

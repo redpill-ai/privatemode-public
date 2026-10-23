@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/edgelesssys/continuum/internal/oss/auth"
-	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -124,15 +123,15 @@ func TestRun(t *testing.T) {
 	for _, state := range []string{"waiting for credential", "waiting for expiration", "backing off", "updating"} {
 		t.Run("cancellation while "+state, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
-				sut := New(func(ctx context.Context, _ auth.Credential) (string, []byte, secretevidence.Bundle, error) {
+				sut := New(func(ctx context.Context, _ auth.Credential) (string, []byte, error) {
 					switch state {
 					case "backing off":
-						return "", nil, secretevidence.Bundle{}, errors.New("update failed")
+						return "", nil, errors.New("update failed")
 					case "updating":
 						<-ctx.Done()
-						return "", nil, secretevidence.Bundle{}, ctx.Err()
+						return "", nil, ctx.Err()
 					default:
-						return "secret", []byte("data"), secretevidence.Bundle{}, nil
+						return "secret", []byte("data"), nil
 					}
 				}, false)
 				if state != "waiting for credential" {
@@ -202,12 +201,12 @@ type updateCounter struct {
 	err      error
 }
 
-func (f *updateCounter) UpdateFn(_ context.Context, cred auth.Credential) (string, []byte, secretevidence.Bundle, error) {
+func (f *updateCounter) UpdateFn(_ context.Context, cred auth.Credential) (string, []byte, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.isCalled++
 	f.lastCred = cred
-	return "", nil, secretevidence.Bundle{}, f.err
+	return "", nil, f.err
 }
 
 func (f *updateCounter) calls() int {

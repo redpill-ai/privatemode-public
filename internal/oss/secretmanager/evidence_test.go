@@ -18,15 +18,15 @@ func TestEvidenceRecordingAndEviction(t *testing.T) {
 	var count int
 	var fail bool
 	manifest := []byte("original manifest")
-	sm := New(func(context.Context, auth.Credential) (string, []byte, secretevidence.Bundle, error) {
+	recorder := secretevidence.Bundle{Attestation: secretevidence.Attestation{Manifest: manifest}}
+	sm := New(func(context.Context, auth.Credential) (string, []byte, error) {
 		count++
 		id := fmt.Sprint(count)
-		b := secretevidence.Bundle{Version: 1, SecretID: id, Attestation: secretevidence.Attestation{Manifest: manifest}}
 		if fail {
-			return id, nil, b, assert.AnError
+			return id, nil, assert.AnError
 		}
-		return id, []byte("private secret"), b, nil
-	}, false)
+		return id, []byte("private secret"), nil
+	}, false).WithEvidence(&recorder)
 	require.NoError(t, sm.OfferCredential(t.Context(), auth.APIKey("private credential")))
 	secret, err := sm.LatestSecret(t.Context())
 	require.NoError(t, err)
@@ -60,4 +60,16 @@ func TestEvidenceRecordingAndEviction(t *testing.T) {
 	assert.True(t, ok)
 	assert.Equal(t, latest.ExpirationDate.UTC(), b.ExpiresAt)
 	assert.Len(t, sm.evidence, maxEvidenceBundles)
+}
+
+func TestEvidenceDisabled(t *testing.T) {
+	sm := New(func(context.Context, auth.Credential) (string, []byte, error) {
+		return "id", []byte("secret"), nil
+	}, false)
+	require.NoError(t, sm.OfferCredential(t.Context(), auth.APIKey("credential")))
+	require.NoError(t, sm.ForceUpdate(t.Context()))
+	_, ok := sm.SecretEvidence("id")
+	assert.False(t, ok)
+	assert.Nil(t, sm.recorder)
+	assert.Nil(t, sm.evidence)
 }

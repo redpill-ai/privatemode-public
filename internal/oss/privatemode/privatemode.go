@@ -7,6 +7,7 @@ package privatemode
 import (
 	"bytes"
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -253,7 +254,7 @@ func (c *Client) Initialize(ctx context.Context, expectedManifest []byte) error 
 
 	contrastClient := contrastsdk.New().WithSlog(c.log.WithGroup("contrast-sdk"))
 	meshCAGetter := attest.NewGetter(c.httpClient, apiHost, contrastClient, c.extraHTTPHeaders)
-	meshCAAdapter := updater.NewStaticCAGetter(meshCAGetter, expectedManifest)
+	meshCAAdapter := attestedMeshCAAdapter{meshCAGetter, expectedManifest}
 	secretClient := secretclient.New(c.httpClient, apiHost, c.extraHTTPHeaders)
 	secretUpdater := updater.New(secretClient, meshCAAdapter, c.log.WithGroup("secret-updater"))
 
@@ -426,4 +427,13 @@ func (c *Client) doEncryptedAPIRequest(req *http.Request) (*forwarder.StreamingR
 		return nil, fmt.Errorf("decrypting response: %w", err)
 	}
 	return plainResp, nil
+}
+
+type attestedMeshCAAdapter struct {
+	attestGetter attest.Getter
+	expectedMf   []byte
+}
+
+func (a attestedMeshCAAdapter) GetMeshCA(ctx context.Context, cred auth.Credential) (*x509.Certificate, error) {
+	return a.attestGetter.GetAttestedMeshCA(ctx, a.expectedMf, cred)
 }

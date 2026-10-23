@@ -28,18 +28,13 @@ import (
 // does not match the expected manifest.
 var ErrManifestMismatch = errors.New("active manifest does not match expected manifest")
 
-// MeshCA pairs a certificate with the exact attestation that authenticated it.
-type MeshCA struct {
-	Certificate *x509.Certificate
-	Evidence    secretevidence.Attestation
-}
-
 // Getter is a client that gets the mesh CA of the Privatemode deployment.
 type Getter struct {
 	httpClient       *http.Client
 	contrastClient   attestationValidator
 	endpoint         string
 	extraHTTPHeaders http.Header
+	evidence         *secretevidence.Bundle
 }
 
 type attestationValidator interface {
@@ -56,58 +51,65 @@ func NewGetter(httpClient *http.Client, endpoint string, contrastClient *contras
 	}
 }
 
-// GetAttestedMeshCA gets the mesh CA and its attestation transcript.
-func (c Getter) GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (MeshCA, error) {
+// WithEvidence records successful attestations in evidence. Configure it before use;
+// the recorder must be shared with the secret client and manager, which serialize updates.
+func (c Getter) WithEvidence(evidence *secretevidence.Bundle) Getter {
+	c.evidence = evidence
+	return c
+}
+
+// GetAttestedMeshCA gets the mesh CA of the Privatemode deployment.
+func (c Getter) GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (*x509.Certificate, error) {
 	// Get the attestation
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {
-		return MeshCA{}, fmt.Errorf("generating nonce: %w", err)
+		return nil, fmt.Errorf("generating nonce: %w", err)
 	}
 	attestReq, err := json.Marshal(httpapi.AttestReq{Nonce: nonce})
 	if err != nil {
-		return MeshCA{}, fmt.Errorf("marshaling attest request: %w", err)
+		return nil, fmt.Errorf("marshaling attest request: %w", err)
 	}
 	attestResp, err := httpapi.Do(ctx, c.httpClient, http.MethodPost, "https://"+c.endpoint+"/privatemode/v1/attest", attestReq, cred, c.extraHTTPHeaders)
 	if err != nil {
-		return MeshCA{}, fmt.Errorf("doing attest request: %w", err)
+		return nil, fmt.Errorf("doing attest request: %w", err)
 	}
 	var att httpapi.AttestResp
 	if err := json.Unmarshal(attestResp, &att); err != nil {
-		return MeshCA{}, fmt.Errorf("unmarshaling attest response: %w", err)
+		return nil, fmt.Errorf("unmarshaling attest response: %w", err)
 	}
 
 	// Validate the attestation against the expected manifest
 	coordinatorState, err := c.contrastClient.ValidateAttestation(ctx, nonce, att.AttestationDoc)
 	if err != nil {
-		return MeshCA{}, fmt.Errorf("validating attestation: %w", err)
+		return nil, fmt.Errorf("validating attestation: %w", err)
 	}
 	if len(coordinatorState.Manifests) != 1 {
-		return MeshCA{}, errors.New("expected exactly one manifest")
+		return nil, errors.New("expected exactly one manifest")
 	}
 	if !bytes.Equal(coordinatorState.Manifests[0], expectedMfBytes) {
-		return MeshCA{}, ErrManifestMismatch
+		return nil, ErrManifestMismatch
 	}
 
 	// Parse the certificate
 	block, _ := pem.Decode(coordinatorState.MeshCA)
 	if block == nil {
-		return MeshCA{}, errors.New("decoding mesh CA certificate failed")
+		return nil, errors.New("decoding mesh CA certificate failed")
 	}
 	cert, err := x509.ParseCertificate(block.Bytes)
 	if err != nil {
-		return MeshCA{}, fmt.Errorf("parsing mesh CA certificate: %w", err)
+		return nil, fmt.Errorf("parsing mesh CA certificate: %w", err)
 	}
 
-	digest := sha256.Sum256(expectedMfBytes)
-	return MeshCA{
-		Certificate: cert,
-		Evidence: secretevidence.Attestation{
+	if c.evidence != nil {
+		digest := sha256.Sum256(expectedMfBytes)
+		c.evidence.Attestation = secretevidence.Attestation{
 			Manifest:       bytes.Clone(expectedMfBytes),
 			ManifestSHA256: hex.EncodeToString(digest[:]),
 			MeshCAPEM:      string(coordinatorState.MeshCA),
 			CoordinatorAttestation: secretevidence.CoordinatorAttestation{
 				Nonce: nonce, Document: att.AttestationDoc, AttestedAt: time.Now().UTC(),
 			},
-		},
-	}, nil
+		}
+	}
+	return cert, nil
 }

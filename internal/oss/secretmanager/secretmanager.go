@@ -27,6 +27,7 @@ const (
 type SecretManager struct {
 	secret                 *Secret
 	updateSecretFn         updateSecretFn
+	recorder               *secretevidence.Bundle
 	evidence               []secretevidence.Bundle // oldest first; guarded by mut together with secret
 	mut                    sync.Mutex
 	clock                  clock.Clock
@@ -50,7 +51,7 @@ func (s Secret) Map() map[string][]byte {
 	}
 }
 
-type updateSecretFn func(ctx context.Context, cred auth.Credential) (string, []byte, secretevidence.Bundle, error)
+type updateSecretFn func(ctx context.Context, cred auth.Credential) (string, []byte, error)
 
 // New creates a new SecretManager.
 func New(updateSecretFn updateSecretFn, dropCredOnUnauthorized bool) *SecretManager {
@@ -60,6 +61,13 @@ func New(updateSecretFn updateSecretFn, dropCredOnUnauthorized bool) *SecretMana
 		dropCredOnUnauthorized: dropCredOnUnauthorized,
 		credChan:               make(chan struct{}),
 	}
+}
+
+// WithEvidence retains the latest eight successful exchanges recorded in evidence.
+// Configure it before use, sharing the recorder with the attestation getter and client.
+func (sm *SecretManager) WithEvidence(evidence *secretevidence.Bundle) *SecretManager {
+	sm.recorder = evidence
+	return sm
 }
 
 // SecretEvidence returns an independent copy of the evidence for a retained secret ID.
@@ -174,7 +182,7 @@ func (sm *SecretManager) Run(ctx context.Context, log *slog.Logger) {
 }
 
 func (sm *SecretManager) updateSecret(ctx context.Context, now time.Time, cred auth.Credential) error {
-	id, data, evidence, err := sm.updateSecretFn(ctx, cred)
+	id, data, err := sm.updateSecretFn(ctx, cred)
 	if sm.dropCredOnUnauthorized && errors.Is(err, httpapi.ErrUnauthorized) {
 		sm.credential = auth.Credential{}
 	}
@@ -191,11 +199,16 @@ func (sm *SecretManager) updateSecret(ctx context.Context, now time.Time, cred a
 		// Cf. https://pkg.go.dev/time#hdr-Monotonic_Clocks
 		ExpirationDate: now.Round(0).Add(secretLifetime - secretRefreshBuffer),
 	}
-	evidence.ExpiresAt = sm.secret.ExpirationDate.UTC()
-	if len(sm.evidence) == maxEvidenceBundles {
-		copy(sm.evidence, sm.evidence[1:])
-		sm.evidence = sm.evidence[:maxEvidenceBundles-1]
+	if sm.recorder != nil {
+		evidence := sm.recorder.Clone()
+		evidence.Version = 1
+		evidence.SecretID = id
+		evidence.ExpiresAt = sm.secret.ExpirationDate.UTC()
+		if len(sm.evidence) == maxEvidenceBundles {
+			copy(sm.evidence, sm.evidence[1:])
+			sm.evidence = sm.evidence[:maxEvidenceBundles-1]
+		}
+		sm.evidence = append(sm.evidence, evidence)
 	}
-	sm.evidence = append(sm.evidence, evidence.Clone())
 	return nil
 }

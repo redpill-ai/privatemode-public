@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -30,12 +31,12 @@ func TestSecretEvidenceEndpoint(t *testing.T) {
 	hash := sha256.Sum256([]byte("public key"))
 	id := base64.StdEncoding.EncodeToString(hash[:])
 	encoded := base64.RawURLEncoding.EncodeToString(hash[:])
-	manager := secretmanager.New(func(context.Context, auth.Credential) (string, []byte, secretevidence.Bundle, error) {
-		return id, []byte("private secret"), secretevidence.Bundle{Version: 1, SecretID: id, Attestation: secretevidence.Attestation{Manifest: []byte("manifest")}}, nil
-	}, false)
+	manager := secretmanager.New(func(context.Context, auth.Credential) (string, []byte, error) {
+		return id, []byte("private secret"), nil
+	}, false).WithEvidence(&secretevidence.Bundle{Attestation: secretevidence.Attestation{Manifest: []byte("manifest")}})
 	require.NoError(t, manager.OfferCredential(t.Context(), auth.APIKey("private credential")))
 	manager.SetCredential(auth.Credential{}) // Reads must not require credentials or refresh the secret.
-	s := &Server{sm: manager, log: slog.New(slog.DiscardHandler)}
+	s := New(http.DefaultClient, manager, Opts{SecretEvidence: manager.SecretEvidence}, slog.New(slog.DiscardHandler))
 	for name, tc := range map[string]struct {
 		method, id string
 		status     int
@@ -88,19 +89,38 @@ func TestSecretIDBeforeStreamingBody(t *testing.T) {
 		assert.NoError(t, forwarder.SendResponse(w, response))
 	}))
 	defer backend.Close()
-	s := newTestServer(nil, secret, backend.Listener.Addr().String(), "")
-	proxy := httptest.NewServer(s.GetHandler())
-	defer proxy.Close()
-	req := prepareChatRequest(t.Context(), require.New(t), "synthetic", nil, "")
-	req.URL.Scheme = "http"
-	req.URL.Host = proxy.Listener.Addr().String()
-	resp, err := proxy.Client().Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	assert.Equal(t, secret.ID, resp.Header.Get(constants.PrivatemodeSecretIDHeader))
-	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	assert.Equal(t, events, string(body))
-	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	for _, enabled := range []bool{false, true} {
+		t.Run(fmt.Sprint(enabled), func(t *testing.T) {
+			s := newTestServer(nil, secret, backend.Listener.Addr().String(), "")
+			wantID := ""
+			if enabled {
+				s.secretEvidence = (&stubSecretManager{}).SecretEvidence
+				wantID = secret.ID
+			}
+			proxy := httptest.NewServer(s.GetHandler())
+			defer proxy.Close()
+			req := prepareChatRequest(t.Context(), require.New(t), "synthetic", nil, "")
+			req.URL.Scheme = "http"
+			req.URL.Host = proxy.Listener.Addr().String()
+			resp, err := proxy.Client().Do(req)
+			require.NoError(t, err)
+			defer resp.Body.Close()
+			assert.Equal(t, wantID, resp.Header.Get(constants.PrivatemodeSecretIDHeader))
+			assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
+			body, err := io.ReadAll(resp.Body)
+			require.NoError(t, err)
+			assert.Equal(t, events, string(body))
+			assert.Equal(t, http.StatusOK, resp.StatusCode)
+		})
+	}
+}
+
+func TestSecretEvidenceRouteDisabled(t *testing.T) {
+	s := New(http.DefaultClient, nil, Opts{}, slog.New(slog.DiscardHandler))
+	for _, method := range []string{http.MethodGet, http.MethodPost} {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequestWithContext(t.Context(), method, "/privatemode/v1/secret-evidence/bad!", nil)
+		s.GetHandler().ServeHTTP(w, r)
+		assert.Equal(t, http.StatusNotFound, w.Code)
+	}
 }

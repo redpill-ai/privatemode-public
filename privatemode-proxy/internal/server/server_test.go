@@ -445,6 +445,7 @@ func TestInvalidSecretRetry(t *testing.T) {
 		apiKeyFallback:               APIKeyFallbackAlways,
 		defaultCacheSalt:             "",
 		sm:                           &stubSecretManager{secrets: []secretmanager.Secret{secretInvalid, secretValid}},
+		secretEvidence:               (&stubSecretManager{}).SecretEvidence,
 		forwarder:                    forwarder.New(http.DefaultClient, stubAuthBackendServer.Listener.Addr().String(), forwarder.SchemeHTTP, forwarder.UpstreamAPI, slog.Default()),
 		log:                          slog.Default(),
 		nvidiaOCSPAllowUnknown:       true,
@@ -483,11 +484,13 @@ func TestInvalidSecretRetry(t *testing.T) {
 // Error responses from outside the TCB are unencrypted and must reach the client with their headers.
 func TestUnencryptedUpstreamErrorKeepsRetryAfter(t *testing.T) {
 	testCases := map[string]struct {
-		status int
+		status   int
+		disabled bool
 	}{
-		"rate limited": {status: http.StatusTooManyRequests},
-		"no nodes":     {status: http.StatusServiceUnavailable},
-		"overloaded":   {status: 529},
+		"rate limited":      {status: http.StatusTooManyRequests},
+		"no nodes":          {status: http.StatusServiceUnavailable},
+		"overloaded":        {status: 529},
+		"evidence disabled": {status: http.StatusTooManyRequests, disabled: true},
 	}
 
 	for name, tc := range testCases {
@@ -505,6 +508,11 @@ func TestUnencryptedUpstreamErrorKeepsRetryAfter(t *testing.T) {
 			apiKey := testAPIKey
 			secret := secretmanager.Secret{ID: "123", Data: bytes.Repeat([]byte{0x42}, 32)}
 			sut := newTestServer(&apiKey, secret, stubBackend.Listener.Addr().String(), "")
+			wantID := "untrusted upstream ID"
+			if !tc.disabled {
+				sut.secretEvidence = (&stubSecretManager{}).SecretEvidence
+				wantID = secret.ID
+			}
 
 			prompt := "Hello"
 			req := prepareChatRequest(t.Context(), require, &prompt, nil, "")
@@ -513,7 +521,7 @@ func TestUnencryptedUpstreamErrorKeepsRetryAfter(t *testing.T) {
 
 			assert.Equal(tc.status, resp.Code)
 			assert.Equal("42", resp.Header().Get("Retry-After"))
-			assert.Equal(secret.ID, resp.Result().Header.Get(constants.PrivatemodeSecretIDHeader))
+			assert.Equal(wantID, resp.Result().Header.Get(constants.PrivatemodeSecretIDHeader))
 		})
 	}
 }
@@ -926,6 +934,7 @@ func TestInferenceHeaders(t *testing.T) {
 
 			apiKey := testAPIKey
 			sut := newTestServer(&apiKey, secret, stubBackend.Listener.Addr().String(), "")
+			sut.secretEvidence = (&stubSecretManager{}).SecretEvidence
 
 			req := tc.buildRequest(t, require)
 			req.Header.Set(constants.PrivatemodeContentLengthTokensHeader, "9999")
