@@ -18,7 +18,7 @@ func TestEvidenceRecordingAndEviction(t *testing.T) {
 	var count int
 	var fail bool
 	manifest := []byte("original manifest")
-	sm := NewWithEvidence(func(context.Context, auth.Credential) (string, []byte, secretevidence.Bundle, error) {
+	sm := New(func(context.Context, auth.Credential) (string, []byte, secretevidence.Bundle, error) {
 		count++
 		id := fmt.Sprint(count)
 		b := secretevidence.Bundle{Version: 1, SecretID: id, Attestation: secretevidence.Attestation{Manifest: manifest}}

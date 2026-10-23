@@ -59,7 +59,7 @@ func SecretManager(ctx context.Context, flags Flags, log *slog.Logger) (*secretm
 
 	secretUpdater := updater.New(ssClient, caGetter, log)
 	credDropOnUnauthorized := flags.APIKey == nil
-	sm := secretmanager.NewWithEvidence(secretUpdater.UpdateSecretWithEvidence, credDropOnUnauthorized)
+	sm := secretmanager.New(secretUpdater.UpdateSecret, credDropOnUnauthorized)
 	if flags.APIKey != nil {
 		if err := sm.OfferCredential(ctx, auth.APIKey(*flags.APIKey)); err != nil {
 			return nil, nil, fmt.Errorf("trying API key: %w", err)

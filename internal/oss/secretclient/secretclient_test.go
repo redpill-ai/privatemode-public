@@ -80,7 +80,7 @@ func TestExchangeSecret(t *testing.T) {
 				secretService.Listener.Addr().String(),
 				http.Header{constants.PrivatemodeClientHeader: {clientID}},
 			)
-			id, secret, evidence, err := client.ExchangeSecretWithEvidence(t.Context(), meshCA, auth.Credential{})
+			id, secret, evidence, err := client.ExchangeSecret(t.Context(), meshCA, auth.Credential{})
 
 			if tc.wantErr != "" {
 				assert.ErrorContains(t, err, tc.wantErr)

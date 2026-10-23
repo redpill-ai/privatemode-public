@@ -28,7 +28,7 @@ type caAdapter struct {
 }
 
 type caUpdater interface {
-	GetAttestedMeshCAWithEvidence(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (attest.MeshCA, error)
+	GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (attest.MeshCA, error)
 }
 
 type manifestFetcher interface {
@@ -61,7 +61,7 @@ func (c *caAdapter) GetMeshCA(ctx context.Context, cred auth.Credential) (attest
 		return attest.MeshCA{}, fmt.Errorf("logging manifest: %w", err)
 	}
 
-	cert, err := c.caUpdater.GetAttestedMeshCAWithEvidence(ctx, expectedMfBytes, cred)
+	cert, err := c.caUpdater.GetAttestedMeshCA(ctx, expectedMfBytes, cred)
 	if err != nil {
 		return attest.MeshCA{}, fmt.Errorf("getting attested certificate: %w", err)
 	}

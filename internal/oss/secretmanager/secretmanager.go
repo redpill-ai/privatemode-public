@@ -27,7 +27,6 @@ const (
 type SecretManager struct {
 	secret                 *Secret
 	updateSecretFn         updateSecretFn
-	updateWithEvidenceFn   func(context.Context, auth.Credential) (string, []byte, secretevidence.Bundle, error)
 	evidence               []secretevidence.Bundle // oldest first; guarded by mut together with secret
 	mut                    sync.Mutex
 	clock                  clock.Clock
@@ -51,7 +50,7 @@ func (s Secret) Map() map[string][]byte {
 	}
 }
 
-type updateSecretFn func(ctx context.Context, cred auth.Credential) (string, []byte, error)
+type updateSecretFn func(ctx context.Context, cred auth.Credential) (string, []byte, secretevidence.Bundle, error)
 
 // New creates a new SecretManager.
 func New(updateSecretFn updateSecretFn, dropCredOnUnauthorized bool) *SecretManager {
@@ -61,13 +60,6 @@ func New(updateSecretFn updateSecretFn, dropCredOnUnauthorized bool) *SecretMana
 		dropCredOnUnauthorized: dropCredOnUnauthorized,
 		credChan:               make(chan struct{}),
 	}
-}
-
-// NewWithEvidence also records a bounded history of public evidence atomically with each secret.
-func NewWithEvidence(update func(context.Context, auth.Credential) (string, []byte, secretevidence.Bundle, error), dropCredOnUnauthorized bool) *SecretManager {
-	sm := New(nil, dropCredOnUnauthorized)
-	sm.updateWithEvidenceFn = update
-	return sm
 }
 
 // SecretEvidence returns an independent copy of the evidence for a retained secret ID.
@@ -182,15 +174,7 @@ func (sm *SecretManager) Run(ctx context.Context, log *slog.Logger) {
 }
 
 func (sm *SecretManager) updateSecret(ctx context.Context, now time.Time, cred auth.Credential) error {
-	var id string
-	var data []byte
-	var evidence secretevidence.Bundle
-	var err error
-	if sm.updateWithEvidenceFn != nil {
-		id, data, evidence, err = sm.updateWithEvidenceFn(ctx, cred)
-	} else {
-		id, data, err = sm.updateSecretFn(ctx, cred)
-	}
+	id, data, evidence, err := sm.updateSecretFn(ctx, cred)
 	if sm.dropCredOnUnauthorized && errors.Is(err, httpapi.ErrUnauthorized) {
 		sm.credential = auth.Credential{}
 	}
@@ -207,13 +191,11 @@ func (sm *SecretManager) updateSecret(ctx context.Context, now time.Time, cred a
 		// Cf. https://pkg.go.dev/time#hdr-Monotonic_Clocks
 		ExpirationDate: now.Round(0).Add(secretLifetime - secretRefreshBuffer),
 	}
-	if sm.updateWithEvidenceFn != nil {
-		evidence.ExpiresAt = sm.secret.ExpirationDate.UTC()
-		if len(sm.evidence) == maxEvidenceBundles {
-			copy(sm.evidence, sm.evidence[1:])
-			sm.evidence = sm.evidence[:maxEvidenceBundles-1]
-		}
-		sm.evidence = append(sm.evidence, evidence.Clone())
+	evidence.ExpiresAt = sm.secret.ExpirationDate.UTC()
+	if len(sm.evidence) == maxEvidenceBundles {
+		copy(sm.evidence, sm.evidence[1:])
+		sm.evidence = sm.evidence[:maxEvidenceBundles-1]
 	}
+	sm.evidence = append(sm.evidence, evidence.Clone())
 	return nil
 }

@@ -27,6 +27,7 @@ import (
 	"github.com/edgelesssys/continuum/internal/oss/ocspheader"
 	"github.com/edgelesssys/continuum/internal/oss/openai"
 	"github.com/edgelesssys/continuum/internal/oss/requestid"
+	"github.com/edgelesssys/continuum/internal/oss/secretevidence"
 	"github.com/edgelesssys/continuum/internal/oss/secretmanager"
 	"github.com/edgelesssys/continuum/privatemode-proxy/internal/server/stub"
 	"github.com/stretchr/testify/assert"
@@ -1137,4 +1138,8 @@ func prepareMultiPartRequest(ctx context.Context, require *require.Assertions, p
 	req.Header.Set("Content-Type", writer.FormDataContentType())
 
 	return req
+}
+
+func (*stubSecretManager) SecretEvidence(string) (secretevidence.Bundle, bool) {
+	return secretevidence.Bundle{}, false
 }

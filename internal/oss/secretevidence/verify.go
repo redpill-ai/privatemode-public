@@ -25,13 +25,10 @@ type attestationValidator interface {
 	ValidateAttestation(context.Context, []byte, []byte) (*contrastsdk.CoordinatorState, error)
 }
 
-// Verify checks the public exchange transcript and returns the manifest digest.
-// Callers should supply an allowlist from a trusted Privatemode CDN/release manifest. Without
-// one, success proves only internal consistency against the manifest's self-declared reference
-// values, not the identity of a Privatemode deployment. SNP/TDX validation checks real hardware
-// against those values, but Contrast also supports insecure reference values. The printed digest
-// is meaningful only after matching a trusted manifest. The SDK may fetch certificate collateral;
-// no connection to the proxy or inference API is required.
+// Verify checks the exchange transcript and returns the manifest digest.
+// Supply trusted manifest hashes to establish deployment identity. Without an allowlist,
+// success proves only consistency with self-declared reference values (including insecure
+// platforms), not Privatemode identity. The SDK may fetch AMD/Intel certificate collateral.
 func Verify(ctx context.Context, bundle Bundle, acceptedManifestSHA256 []string) (string, error) {
 	return verify(ctx, bundle, acceptedManifestSHA256, contrastsdk.New())
 }
@@ -64,9 +61,7 @@ func verify(ctx context.Context, b Bundle, accepted []string, validator attestat
 	if len(state.Manifests) != 1 || !bytes.Equal(state.Manifests[0], b.Manifest) {
 		return "", errors.New("attested state must contain exactly the bundle manifest")
 	}
-	// Contrast binds the manifest through the transition digest, but does not include
-	// the policies array in report data. Authenticate each supplied policy by its
-	// manifest key, using Contrast's Policy.Hash encoding (SHA-256, lowercase hex).
+	// Policies are outside report data; Contrast keys them by SHA-256 of raw policy bytes.
 	var manifest struct {
 		Policies map[string]json.RawMessage
 	}

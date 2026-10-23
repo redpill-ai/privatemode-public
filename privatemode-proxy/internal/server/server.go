@@ -68,7 +68,6 @@ type Server struct {
 	corsAllowedOrigins           []string
 	clientID                     string
 	modelsDocument               *ModelsDocument
-	secretEvidence               SecretEvidenceReader
 }
 
 // Opts are the options for creating a new [Server].
@@ -90,13 +89,6 @@ type Opts struct {
 	ClientID                     string
 	// ModelsDocument, if set, is served at the models endpoint instead of forwarding the request.
 	ModelsDocument *ModelsDocument
-	// SecretEvidence provides the public transcript for retained secret IDs.
-	SecretEvidence SecretEvidenceReader
-}
-
-// SecretEvidenceReader reads evidence without triggering an attestation or secret update.
-type SecretEvidenceReader interface {
-	SecretEvidence(string) (secretevidence.Bundle, bool)
 }
 
 type apiForwarder interface {
@@ -111,6 +103,7 @@ type secretManager interface {
 	LatestSecret(ctx context.Context) (secretmanager.Secret, error)
 	ForceUpdate(ctx context.Context) error
 	OfferCredential(context.Context, auth.Credential) error
+	SecretEvidence(string) (secretevidence.Bundle, bool)
 }
 
 // New sets up a new Server.
@@ -138,7 +131,6 @@ func New(client *http.Client, sm secretManager, opts Opts, log *slog.Logger) *Se
 		corsAllowedOrigins:           opts.CORSAllowedOrigins,
 		clientID:                     opts.ClientID,
 		modelsDocument:               opts.ModelsDocument,
-		secretEvidence:               opts.SecretEvidence,
 	}
 }
 
@@ -313,21 +305,16 @@ func (s *Server) forwardEncrypted(
 
 	fullResponseMapper := func(resp *http.Response) (forwarder.Response, error) {
 		logging.AddSummaryAttrs(ctx, "backendRequestID", requestid.FromHeader(resp.Header))
+		resp.Header.Set(constants.PrivatemodeSecretIDHeader, attemptSecretID)
 
-		var dsResp forwarder.Response
 		dsResp, err := ce.DecryptResponse(resp, constants.MaxEncryptedFrameSize)
 		if err != nil {
 			if errors.Is(err, encbody.ErrNotEncrypted) && resp.StatusCode >= 400 {
 				// Error responses originating outside the TCB are unencrypted
-				dsResp, err = forwarder.PassthroughResponseMapper(resp)
+				return forwarder.PassthroughResponseMapper(resp)
 			}
-			if err != nil {
-				return nil, fmt.Errorf("decrypting response: %w", err)
-			}
+			return nil, fmt.Errorf("decrypting response: %w", err)
 		}
-		// Use the successful attempt's ID, even if the manager has already rotated.
-		// Mapping happens before the forwarder writes headers or streaming body bytes.
-		dsResp.GetHeader().Set(constants.PrivatemodeSecretIDHeader, attemptSecretID)
 
 		return dsResp, nil
 	}

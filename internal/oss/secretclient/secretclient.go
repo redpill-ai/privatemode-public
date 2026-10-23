@@ -46,14 +46,8 @@ func New(httpClient *http.Client, endpoint string, extraHTTPHeaders http.Header)
 	}
 }
 
-// ExchangeSecret performs a cryptographic key agreement with the Privatemode backend.
-func (c *Client) ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, error) {
-	id, secret, _, err := c.ExchangeSecretWithEvidence(ctx, meshCA, cred)
-	return id, secret, err
-}
-
-// ExchangeSecretWithEvidence returns the public transcript together with the secret.
-func (c *Client) ExchangeSecretWithEvidence(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, secretevidence.Exchange, error) {
+// ExchangeSecret performs a key agreement and returns the secret and public transcript.
+func (c *Client) ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, secretevidence.Exchange, error) {
 	var evidence secretevidence.Exchange
 	id, secret, err := ExchangeSecret(ctx, c.httpClient, c.endpoint, cred, c.extraHTTPHeaders, func(req *httpapi.SecretReq, resp *httpapi.SecretResp) error {
 		ssPublicKey, err := getVerifiedPublicKey(resp.MeshCert, meshCA)

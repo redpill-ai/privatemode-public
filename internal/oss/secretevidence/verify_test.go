@@ -60,13 +60,11 @@ func TestVerify(t *testing.T) {
 			b := bundle.Clone()
 			state := &contrastsdk.CoordinatorState{
 				Manifests: [][]byte{bytes.Clone(bundle.Manifest)}, MeshCA: []byte(bundle.MeshCAPEM),
-				Policies: [][]byte{testPolicy()},
+				Policies: [][]byte{[]byte(testPolicy)},
 			}
 			if tc.mutate != nil {
 				tc.mutate(&b, state)
 			}
-			// Only the hardware-attestation seam is stubbed; the CA chain, HPKE public key,
-			// ECDSA signature, manifest digest and secret ID use real cryptography.
 			validator := testValidator{expected: bundle.CoordinatorAttestation, state: state}
 			digest, err := verify(t.Context(), b, tc.accept, validator)
 			if tc.err != "" {
@@ -125,7 +123,7 @@ func newTestBundle(t *testing.T) Bundle {
 	pub := priv.PublicKey().Bytes()
 	sig, err := ecdsa.SignASN1(rand.Reader, ssKey, secretexchange.Hash(pub, encap))
 	require.NoError(t, err)
-	policyDigest := sha256.Sum256(testPolicy())
+	policyDigest := sha256.Sum256([]byte(testPolicy))
 	manifest := []byte(fmt.Sprintf(`{"Policies":{"%x":{}}}`, policyDigest))
 	digest := sha256.Sum256(manifest)
 	return Bundle{
@@ -139,6 +137,4 @@ func newTestBundle(t *testing.T) Bundle {
 	}
 }
 
-func testPolicy() []byte {
-	return []byte("package policy\nallow := true\n")
-}
+const testPolicy = "package policy\nallow := true\n"

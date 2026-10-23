@@ -27,7 +27,7 @@ type Updater struct {
 }
 
 type ssClient interface {
-	ExchangeSecretWithEvidence(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, secretevidence.Exchange, error)
+	ExchangeSecret(ctx context.Context, meshCA *x509.Certificate, cred auth.Credential) (string, []byte, secretevidence.Exchange, error)
 }
 
 // CAGetter gets the mesh CA.
@@ -53,14 +53,8 @@ func New(ssClient ssClient, caGetter CAGetter, log *slog.Logger) *Updater {
 	}
 }
 
-// UpdateSecret implements how to update prompt secrets when the underlying Privatemode deployment is updated.
-func (s *Updater) UpdateSecret(ctx context.Context, cred auth.Credential) (id string, data []byte, retErr error) {
-	id, data, _, err := s.UpdateSecretWithEvidence(ctx, cred)
-	return id, data, err
-}
-
-// UpdateSecretWithEvidence returns the evidence for the CA and exchange that produced this secret.
-func (s *Updater) UpdateSecretWithEvidence(ctx context.Context, cred auth.Credential) (id string, data []byte, evidence secretevidence.Bundle, retErr error) {
+// UpdateSecret returns a new secret with the evidence that authenticated its exchange.
+func (s *Updater) UpdateSecret(ctx context.Context, cred auth.Credential) (id string, data []byte, evidence secretevidence.Bundle, retErr error) {
 	var exchange secretevidence.Exchange
 	// retry.Context aborts the inter-attempt backoff on cancellation (e.g. shutdown); it's per-call so it's added here.
 	opts := append([]retry.Option{retry.Context(ctx)}, s.retryOpts...)
@@ -74,7 +68,7 @@ func (s *Updater) UpdateSecretWithEvidence(ctx context.Context, cred auth.Creden
 			}
 		}
 		var err error
-		id, data, exchange, err = s.ssClient.ExchangeSecretWithEvidence(ctx, s.meshCA.Certificate, cred)
+		id, data, exchange, err = s.ssClient.ExchangeSecret(ctx, s.meshCA.Certificate, cred)
 		if err == nil {
 			return nil
 		}
@@ -82,7 +76,7 @@ func (s *Updater) UpdateSecretWithEvidence(ctx context.Context, cred auth.Creden
 		if err := s.updateCA(ctx, cred); err != nil {
 			return err
 		}
-		id, data, exchange, err = s.ssClient.ExchangeSecretWithEvidence(ctx, s.meshCA.Certificate, cred)
+		id, data, exchange, err = s.ssClient.ExchangeSecret(ctx, s.meshCA.Certificate, cred)
 		return err
 	}); err != nil {
 		return "", nil, secretevidence.Bundle{}, fmt.Errorf("setting secrets: %w", err)
@@ -117,9 +111,9 @@ func NewStaticCAGetter(caUpdater caUpdater, expectedMfBytes []byte) StaticCAGett
 
 // GetMeshCA gets the certificate.
 func (s StaticCAGetter) GetMeshCA(ctx context.Context, cred auth.Credential) (attest.MeshCA, error) {
-	return s.caUpdater.GetAttestedMeshCAWithEvidence(ctx, s.expectedMfBytes, cred)
+	return s.caUpdater.GetAttestedMeshCA(ctx, s.expectedMfBytes, cred)
 }
 
 type caUpdater interface {
-	GetAttestedMeshCAWithEvidence(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (attest.MeshCA, error)
+	GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (attest.MeshCA, error)
 }

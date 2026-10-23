@@ -56,14 +56,8 @@ func NewGetter(httpClient *http.Client, endpoint string, contrastClient *contras
 	}
 }
 
-// GetAttestedMeshCA gets the mesh CA of the Privatemode deployment.
-func (c Getter) GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (*x509.Certificate, error) {
-	ca, err := c.GetAttestedMeshCAWithEvidence(ctx, expectedMfBytes, cred)
-	return ca.Certificate, err
-}
-
-// GetAttestedMeshCAWithEvidence also returns the public attestation transcript.
-func (c Getter) GetAttestedMeshCAWithEvidence(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (MeshCA, error) {
+// GetAttestedMeshCA gets the mesh CA and its attestation transcript.
+func (c Getter) GetAttestedMeshCA(ctx context.Context, expectedMfBytes []byte, cred auth.Credential) (MeshCA, error) {
 	// Get the attestation
 	nonce := make([]byte, 32)
 	if _, err := rand.Read(nonce); err != nil {

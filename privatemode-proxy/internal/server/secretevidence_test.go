@@ -30,12 +30,12 @@ func TestSecretEvidenceEndpoint(t *testing.T) {
 	hash := sha256.Sum256([]byte("public key"))
 	id := base64.StdEncoding.EncodeToString(hash[:])
 	encoded := base64.RawURLEncoding.EncodeToString(hash[:])
-	manager := secretmanager.NewWithEvidence(func(context.Context, auth.Credential) (string, []byte, secretevidence.Bundle, error) {
+	manager := secretmanager.New(func(context.Context, auth.Credential) (string, []byte, secretevidence.Bundle, error) {
 		return id, []byte("private secret"), secretevidence.Bundle{Version: 1, SecretID: id, Attestation: secretevidence.Attestation{Manifest: []byte("manifest")}}, nil
 	}, false)
 	require.NoError(t, manager.OfferCredential(t.Context(), auth.APIKey("private credential")))
-	// Leave sm nil: this unauthenticated read must not offer credentials or rotate secrets.
-	s := &Server{secretEvidence: manager, log: slog.New(slog.DiscardHandler)}
+	manager.SetCredential(auth.Credential{}) // Reads must not require credentials or refresh the secret.
+	s := &Server{sm: manager, log: slog.New(slog.DiscardHandler)}
 	for name, tc := range map[string]struct {
 		method, id string
 		status     int
@@ -97,7 +97,6 @@ func TestSecretIDBeforeStreamingBody(t *testing.T) {
 	resp, err := proxy.Client().Do(req)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	// Client.Do exposes the committed headers before the caller reads any body.
 	assert.Equal(t, secret.ID, resp.Header.Get(constants.PrivatemodeSecretIDHeader))
 	assert.Equal(t, "text/event-stream", resp.Header.Get("Content-Type"))
 	body, err := io.ReadAll(resp.Body)

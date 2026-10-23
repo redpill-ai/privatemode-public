@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestGetAttestedMeshCAWithEvidence(t *testing.T) {
+func TestGetAttestedMeshCA(t *testing.T) {
 	manifest := []byte(`{"manifest":"expected"}`)
 	doc := []byte("Coordinator attestation document")
 	var nonce []byte
@@ -49,7 +49,7 @@ func TestGetAttestedMeshCAWithEvidence(t *testing.T) {
 				httpClient: api.Client(), endpoint: api.Listener.Addr().String(),
 				contrastClient: testValidator{t: t, nonce: &nonce, doc: doc, state: &contrastsdk.CoordinatorState{Manifests: tc.manifests, MeshCA: caPEM}},
 			}
-			ca, err := getter.GetAttestedMeshCAWithEvidence(t.Context(), manifest, auth.Credential{})
+			ca, err := getter.GetAttestedMeshCA(t.Context(), manifest, auth.Credential{})
 			if tc.err != "" {
 				assert.ErrorContains(t, err, tc.err)
 				assert.Nil(t, ca.Certificate)
